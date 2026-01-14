@@ -2,6 +2,8 @@
 
 基于 Cloudflare Workers + D1 + Email Routing 的临时邮箱系统。
 
+🌐 **在线访问**: [https://mail.sumeetsxiang.com/](https://mail.sumeetsxiang.com/)
+
 ## 支持的域名
 
 - 2art.fun
