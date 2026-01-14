@@ -1,0 +1,700 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>临时邮箱系统</title>
+    <meta name="description" content="免费临时邮箱，支持多个域名，实时接收邮件，保护隐私。" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📧</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;600;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --ink: #1d232a;
+        --ink-muted: #4a5a67;
+        --accent: #f08b2d;
+        --accent-cool: #2f7f83;
+        --surface: rgba(255, 255, 255, 0.78);
+        --surface-strong: rgba(255, 255, 255, 0.92);
+        --border: rgba(29, 35, 42, 0.12);
+        --shadow: 0 28px 60px rgba(19, 26, 32, 0.15);
+        --radius-lg: 22px;
+        --radius-md: 16px;
+        --radius-sm: 12px;
+      }
+      *, *::before, *::after { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Noto Sans SC", "Space Grotesk", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 12% 18%, rgba(243, 171, 106, 0.45), transparent 45%),
+          radial-gradient(circle at 85% 5%, rgba(109, 191, 181, 0.45), transparent 40%),
+          linear-gradient(120deg, #f7f2e9 0%, #e6f0ec 55%, #f3e6d7 100%);
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background-image: repeating-linear-gradient(90deg, rgba(29, 35, 42, 0.03) 0, rgba(29, 35, 42, 0.03) 1px, transparent 1px, transparent 10px),
+          repeating-linear-gradient(0deg, rgba(29, 35, 42, 0.02) 0, rgba(29, 35, 42, 0.02) 1px, transparent 1px, transparent 10px);
+        pointer-events: none;
+      }
+      .page { position: relative; max-width: 1200px; margin: 0 auto; padding: 48px 24px 72px; }
+      .hero {
+        display: grid;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+        gap: 24px;
+        align-items: center;
+        margin-bottom: 32px;
+        animation: heroEnter 0.9s ease both;
+      }
+      .hero__info { grid-column: span 7; }
+      .hero__card {
+        grid-column: span 5;
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.6));
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        box-shadow: var(--shadow);
+        position: relative;
+        overflow: hidden;
+      }
+      .hero__card::before {
+        content: "";
+        position: absolute;
+        inset: -50% -20% auto auto;
+        width: 180px;
+        height: 180px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(240, 139, 45, 0.4), transparent 70%);
+      }
+      .hero__row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 0;
+        border-bottom: 1px solid rgba(29, 35, 42, 0.08);
+      }
+      .hero__row:last-child { border-bottom: none; }
+      .hero__label { text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; color: var(--ink-muted); }
+      .hero__value { font-weight: 600; text-align: right; max-width: 60%; word-break: break-all; }
+      .eyebrow { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.35em; color: var(--ink-muted); }
+      h1 { font-family: "Space Grotesk", sans-serif; font-size: clamp(28px, 3vw, 40px); margin: 0 0 16px; line-height: 1.1; }
+      .lead { margin: 0 0 24px; font-size: 16px; color: var(--ink-muted); max-width: 600px; }
+      .hero__stats { display: flex; gap: 16px; flex-wrap: wrap; }
+      .stat { background: var(--surface-strong); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; min-width: 120px; }
+      .stat__label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted); }
+      .stat__value { font-size: 18px; font-weight: 600; }
+      .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 24px; }
+      .panel {
+        grid-column: span 12;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 24px;
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(12px);
+        animation: panelEnter 0.8s ease both;
+        animation-delay: var(--delay);
+      }
+      .panel--inbox { grid-column: span 5; }
+      .panel--message { grid-column: span 7; }
+      .panel__header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }
+      .panel__header h2 { margin: 0 0 6px; font-family: "Space Grotesk", sans-serif; font-size: 20px; }
+      .panel__header p { margin: 0; color: var(--ink-muted); }
+      .panel__meta { text-align: right; font-size: 12px; color: var(--ink-muted); }
+      .meta-label { display: block; text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+      .meta-value { display: block; font-weight: 600; color: var(--ink); }
+      .domain-picker { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+      .domain-pill {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 8px 16px;
+        font-size: 13px;
+        background: rgba(255, 255, 255, 0.7);
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .domain-pill.is-active { border-color: rgba(240, 139, 45, 0.6); box-shadow: 0 10px 20px rgba(240, 139, 45, 0.2); transform: translateY(-1px); }
+      .custom-prefix-section { margin-bottom: 18px; }
+      .prefix-input-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 14px 18px;
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+      }
+      .prefix-input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        font-size: 15px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        color: var(--accent-cool);
+        outline: none;
+      }
+      .prefix-input::placeholder { color: var(--ink-muted); opacity: 0.6; font-weight: 400; }
+      .prefix-at {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink-muted);
+      }
+      .domain-select {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 14px;
+        font-size: 13px;
+        font-family: inherit;
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--ink);
+        cursor: pointer;
+        outline: none;
+      }
+      .domain-select:focus { border-color: rgba(47, 127, 131, 0.6); }
+      .prefix-hint {
+        margin-top: 8px;
+        font-size: 11px;
+        color: var(--ink-muted);
+        padding-left: 4px;
+      }
+      .address-display {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        padding: 18px;
+        background: rgba(255, 255, 255, 0.75);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+      }
+      .address-text { font-family: "Space Grotesk", sans-serif; font-size: 16px; font-weight: 600; color: var(--accent-cool); word-break: break-all; }
+      .address-actions { display: flex; gap: 10px; flex-shrink: 0; }
+      .address-controls { display: flex; justify-content: space-between; gap: 16px; align-items: center; flex-wrap: wrap; }
+      .manual-query {
+        margin-top: 18px;
+        padding: 16px;
+        border-radius: var(--radius-md);
+        border: 1px dashed rgba(29, 35, 42, 0.16);
+        background: rgba(255, 255, 255, 0.7);
+        display: grid;
+        gap: 12px;
+      }
+      .manual-query__header { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink-muted); }
+      .manual-query__title { font-weight: 600; color: var(--ink); }
+      .manual-query__row { display: flex; gap: 10px; flex-wrap: wrap; }
+      .manual-query__input {
+        flex: 1;
+        min-width: 220px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 10px 16px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.9);
+      }
+      .manual-query__input:focus { outline: none; border-color: rgba(47, 127, 131, 0.6); box-shadow: 0 0 0 3px rgba(47, 127, 131, 0.12); }
+      .button {
+        border: none;
+        border-radius: 999px;
+        padding: 10px 18px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        background: var(--ink);
+        color: #fff;
+        transition: all 0.2s ease;
+      }
+      .button:hover { transform: translateY(-1px); box-shadow: 0 10px 16px rgba(29, 35, 42, 0.18); }
+      .button:disabled { cursor: not-allowed; opacity: 0.6; transform: none; }
+      .button--ghost { background: transparent; border: 1px solid var(--border); color: var(--ink); }
+      .status { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .status__dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-muted); animation: pulse 2s ease infinite; }
+      .status[data-state="ready"] .status__dot { background: var(--accent-cool); }
+      .status[data-state="busy"] .status__dot { background: var(--accent); }
+      .status[data-state="error"] .status__dot { background: #dc2626; }
+      .toggle { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; color: var(--ink-muted); }
+      .toggle input { display: none; }
+      .toggle__track { width: 40px; height: 22px; border-radius: 999px; background: rgba(29, 35, 42, 0.2); position: relative; transition: background 0.2s ease; }
+      .toggle__track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 0.2s ease; }
+      .toggle input:checked + .toggle__track { background: var(--accent-cool); }
+      .toggle input:checked + .toggle__track::after { transform: translateX(18px); }
+      .inbox-list { display: grid; gap: 12px; max-height: 480px; overflow-y: auto; padding-right: 4px; }
+      .message-item {
+        text-align: left;
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.82);
+        padding: 14px 16px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      .message-item.is-active { border-color: rgba(47, 127, 131, 0.5); box-shadow: 0 12px 20px rgba(47, 127, 131, 0.18); }
+      .message-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .message-item__subject { font-weight: 600; font-size: 14px; }
+      .message-meta-line { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--ink-muted); margin-top: 6px; }
+      .message-preview { margin-top: 8px; font-size: 12px; color: var(--ink-muted); }
+      .chip { background: rgba(240, 139, 45, 0.18); color: #e36f14; border-radius: 999px; padding: 2px 10px; font-size: 11px; text-transform: uppercase; }
+      .message-shell { background: rgba(255, 255, 255, 0.86); border-radius: var(--radius-md); padding: 18px; border: 1px solid var(--border); }
+      .message-empty { color: var(--ink-muted); font-size: 14px; }
+      .message-body { display: grid; gap: 16px; }
+      .message-subject { margin: 0; font-size: 20px; }
+      .message-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin: 0; font-size: 12px; color: var(--ink-muted); }
+      .message-meta dt { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; margin-bottom: 4px; }
+      .message-meta dd { margin: 0; color: var(--ink); font-weight: 600; word-break: break-word; }
+      .tabs { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+      .tab { border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-size: 12px; text-transform: uppercase; cursor: pointer; background: rgba(255, 255, 255, 0.8); color: var(--ink); }
+      .tab.is-active { border-color: rgba(47, 127, 131, 0.6); color: var(--accent-cool); }
+      .tab.is-disabled { opacity: 0.5; cursor: not-allowed; }
+      .message-view { display: grid; gap: 12px; }
+      .message-text { white-space: pre-wrap; font-size: 13px; line-height: 1.6; color: var(--ink); }
+      .message-html { width: 100%; min-height: 450px; border: 1px solid rgba(29, 35, 42, 0.1); border-radius: var(--radius-sm); background: #fff; }
+      .attachments h4 { margin: 0 0 12px; font-size: 14px; }
+      .attachments-list { display: flex; flex-direction: column; gap: 8px; }
+      .attachment-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; background: rgba(255, 255, 255, 0.9); text-decoration: none; font-size: 12px; color: var(--ink); }
+      .attachment-item:hover { background: rgba(47, 127, 131, 0.1); }
+      .empty-state { font-size: 13px; color: var(--ink-muted); padding: 12px; border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.75); }
+      @keyframes panelEnter { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes heroEnter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+      @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.4); opacity: 0.5; } }
+      @media (max-width: 980px) { .hero__info, .hero__card, .panel--inbox, .panel--message { grid-column: span 12; } }
+      @media (max-width: 680px) {
+        .page { padding: 32px 18px 56px; }
+        .address-display { flex-direction: column; align-items: flex-start; }
+        .address-actions { width: 100%; }
+        .address-actions .button { flex: 1; }
+        .manual-query__row { flex-direction: column; }
+        .hero__row { flex-direction: column; align-items: flex-start; }
+        .message-meta { grid-template-columns: 1fr; }
+        .prefix-input-row { flex-wrap: wrap; }
+        .prefix-input { min-width: 0; }
+        .domain-select { flex: 1; min-width: 140px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="hero">
+        <div class="hero__info">
+          <p class="eyebrow">临时邮箱系统</p>
+          <h1>随机生成临时邮箱，收件即时可见。</h1>
+          <p class="lead">支持多个域名，实时接收邮件，保护您的隐私。</p>
+          <div class="hero__stats">
+            <div class="stat">
+              <span class="stat__label">域名数量</span>
+              <span class="stat__value" id="domainCount">--</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">收件数量</span>
+              <span class="stat__value" id="inboxCount">0</span>
+            </div>
+            <div class="stat">
+              <span class="stat__label">刷新模式</span>
+              <span class="stat__value" id="refreshState">手动</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero__card">
+          <div class="hero__row">
+            <span class="hero__label">当前邮箱</span>
+            <span class="hero__value" id="heroAddress">尚未生成邮箱</span>
+          </div>
+          <div class="hero__row">
+            <span class="hero__label">状态</span>
+            <span class="hero__value" id="heroStatus">空闲</span>
+          </div>
+          <div class="hero__row">
+            <span class="hero__label">最后更新</span>
+            <span class="hero__value" id="heroUpdated">从未</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel panel--address" style="--delay: 0.05s">
+          <div class="panel__header">
+            <div>
+              <h2>邮箱生成器</h2>
+              <p>选择域名或随机选择，生成临时邮箱。</p>
+            </div>
+            <div class="status" id="statusLine" data-state="idle">
+              <span class="status__dot"></span>
+              <span class="status__text" id="statusText">空闲</span>
+            </div>
+          </div>
+
+          <div class="domain-picker" id="domainPicker"></div>
+
+          <div class="custom-prefix-section">
+            <div class="prefix-input-row">
+              <input class="prefix-input" id="prefixInput" type="text" placeholder="自定义前缀（可选，留空则随机）" autocomplete="off" />
+              <span class="prefix-at">@</span>
+              <select class="domain-select" id="domainSelect">
+                <option value="">随机域名</option>
+              </select>
+            </div>
+            <div class="prefix-hint">输入自定义前缀（如 myname），或留空随机生成</div>
+          </div>
+
+          <div class="address-display">
+            <div class="address-text" id="addressText">尚未生成邮箱</div>
+            <div class="address-actions">
+              <button class="button button--ghost" id="copyBtn" type="button" disabled>复制</button>
+              <button class="button" id="generateBtn" type="button">生成邮箱</button>
+            </div>
+          </div>
+
+          <div class="address-controls">
+            <label class="toggle">
+              <input type="checkbox" id="autoRefreshToggle" checked />
+              <span class="toggle__track"></span>
+              <span class="toggle__label">每 5 秒自动刷新</span>
+            </label>
+            <button class="button button--ghost" id="refreshBtn" type="button">刷新收件箱</button>
+          </div>
+
+          <div class="manual-query">
+            <div class="manual-query__header">
+              <span class="manual-query__title">指定邮箱查询</span>
+              <span class="manual-query__hint">仅支持当前域名列表</span>
+            </div>
+            <div class="manual-query__row">
+              <input class="manual-query__input" id="manualAddress" type="text" placeholder="输入邮箱地址" autocomplete="off" />
+              <button class="button button--ghost" id="useAddressBtn" type="button">查询收件箱</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel panel--inbox" style="--delay: 0.12s">
+          <div class="panel__header">
+            <div>
+              <h2>收件箱</h2>
+              <p id="inboxHint">先生成邮箱开始收信。</p>
+            </div>
+            <div class="panel__meta">
+              <span class="meta-label">最近更新</span>
+              <span class="meta-value" id="lastUpdated">从未</span>
+            </div>
+          </div>
+          <div class="inbox-list" id="inboxList">
+            <div class="empty-state">暂无邮件。</div>
+          </div>
+        </section>
+
+        <section class="panel panel--message" style="--delay: 0.18s">
+          <div class="panel__header">
+            <div>
+              <h2>邮件内容</h2>
+              <p id="messageHint">选择一封邮件查看详情。</p>
+            </div>
+            <div class="tabs" id="messageTabs">
+              <button class="tab is-active" type="button" data-view="text">文本</button>
+              <button class="tab" type="button" data-view="html" id="htmlTab">HTML</button>
+            </div>
+          </div>
+
+          <div class="message-shell" id="messageShell">
+            <div class="message-empty" id="messageEmpty">未选择邮件。</div>
+            <div class="message-body" id="messageBody" hidden>
+              <h3 class="message-subject" id="messageSubject">主题</h3>
+              <dl class="message-meta">
+                <div><dt>发件人</dt><dd id="messageFrom">--</dd></div>
+                <div><dt>收件人</dt><dd id="messageTo">--</dd></div>
+                <div><dt>日期</dt><dd id="messageDate">--</dd></div>
+                <div><dt>附件</dt><dd id="messageAttachmentCount">0</dd></div>
+              </dl>
+              <div class="message-view">
+                <div class="message-text" id="messageText"></div>
+                <iframe class="message-html" id="messageHtml" sandbox="allow-popups allow-same-origin allow-scripts" hidden></iframe>
+              </div>
+              <div class="attachments" id="attachments" hidden>
+                <h4>附件</h4>
+                <div class="attachments-list" id="attachmentsList"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const state = { domains: [], selectedDomain: "random", address: "", messages: [], activeMessageId: "", activeMessage: null, autoRefresh: true, refreshTimer: null, isRefreshing: false, viewMode: "text" };
+      const $ = id => document.getElementById(id);
+
+      function setStatus(s, t) { $("statusLine").dataset.state = s; $("statusText").textContent = t; $("heroStatus").textContent = t; }
+      function formatDate(v) { if (!v) return "未知"; const d = new Date(v); return isNaN(d.getTime()) ? v : d.toLocaleString("zh-CN"); }
+      function formatSize(b) { if (!isFinite(b)) return "?"; if (b < 1024) return b + " B"; const k = b / 1024; return k < 1024 ? k.toFixed(1) + " KB" : (k / 1024).toFixed(1) + " MB"; }
+      function updateUI() {
+        const addr = state.address || "尚未生成邮箱";
+        $("addressText").textContent = addr;
+        $("heroAddress").textContent = addr;
+        $("copyBtn").disabled = !state.address;
+        $("inboxHint").textContent = state.address ? "正在监听收件箱。" : "先生成邮箱开始收信。";
+        $("inboxCount").textContent = state.messages.length;
+        $("refreshState").textContent = state.autoRefresh ? "自动" : "手动";
+      }
+
+      function renderDomains() {
+        const picker = $("domainPicker");
+        picker.innerHTML = "";
+        ["random", ...state.domains].forEach(d => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "domain-pill" + (d === state.selectedDomain ? " is-active" : "");
+          btn.textContent = d === "random" ? "随机域名" : d;
+          btn.onclick = () => { 
+            state.selectedDomain = d; 
+            renderDomains(); 
+            updateDomainSelect();
+          };
+          picker.appendChild(btn);
+        });
+        $("domainCount").textContent = state.domains.length;
+        
+        // 渲染域名下拉框
+        const select = $("domainSelect");
+        select.innerHTML = '<option value="">随机域名</option>';
+        state.domains.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d;
+          opt.textContent = d;
+          select.appendChild(opt);
+        });
+        updateDomainSelect();
+      }
+      
+      function updateDomainSelect() {
+        const select = $("domainSelect");
+        select.value = state.selectedDomain === "random" ? "" : state.selectedDomain;
+      }
+
+      function renderInbox() {
+        const list = $("inboxList");
+        list.innerHTML = "";
+        if (!state.address) { list.innerHTML = '<div class="empty-state">未生成邮箱。</div>'; return; }
+        if (!state.messages.length) { list.innerHTML = '<div class="empty-state">暂无邮件。</div>'; return; }
+        state.messages.forEach(m => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "message-item" + (m.id === state.activeMessageId ? " is-active" : "");
+          btn.innerHTML = `<div class="message-header"><div class="message-item__subject">${m.subject || "(无主题)"}</div>${m.hasAttachments ? '<span class="chip">附件</span>' : ""}</div>
+            <div class="message-meta-line"><span>${m.from || "未知"}</span><span>${formatDate(m.date)}</span></div>
+            <div class="message-preview">${m.preview || "无预览"}</div>`;
+          btn.onclick = () => openMessage(m.id);
+          list.appendChild(btn);
+        });
+      }
+
+      function renderMessage(m) {
+        if (!m) { $("messageEmpty").hidden = false; $("messageBody").hidden = true; $("messageHint").textContent = "选择一封邮件查看详情。"; return; }
+        $("messageEmpty").hidden = true;
+        $("messageBody").hidden = false;
+        $("messageSubject").textContent = m.subject || "(无主题)";
+        $("messageFrom").textContent = m.from || "未知";
+        $("messageTo").textContent = m.to || "未知";
+        $("messageDate").textContent = formatDate(m.date);
+        $("messageAttachmentCount").textContent = m.attachments ? m.attachments.length : 0;
+        $("messageText").textContent = m.text || "无纯文本内容。";
+        const hasHtml = m.html && m.html.trim();
+        $("htmlTab").disabled = !hasHtml;
+        $("htmlTab").classList.toggle("is-disabled", !hasHtml);
+        // 优先显示 HTML 视图（如果有 HTML 内容）
+        if (hasHtml) {
+          setViewMode("html");
+        } else {
+          setViewMode("text");
+        }
+        // 完整渲染原始 HTML 邮件
+        $("messageHtml").srcdoc = '<!doctype html><html><head><meta charset="UTF-8"><base target="_blank"><style>body{margin:0;padding:0;}</style></head><body>' + (m.html || "") + '</body></html>';
+        $("messageHint").textContent = "正在查看邮件详情。";
+        // 附件
+        const attDiv = $("attachments"), attList = $("attachmentsList");
+        attList.innerHTML = "";
+        if (m.attachments && m.attachments.length) {
+          attDiv.hidden = false;
+          m.attachments.forEach(a => {
+            const link = document.createElement("a");
+            link.className = "attachment-item";
+            link.href = `/api/attachment?id=${a.id}`;
+            link.target = "_blank";
+            link.textContent = `${a.filename} (${formatSize(a.size)})`;
+            attList.appendChild(link);
+          });
+        } else { attDiv.hidden = true; }
+      }
+
+      function setViewMode(mode) {
+        state.viewMode = mode;
+        $("messageText").hidden = mode !== "text";
+        $("messageHtml").hidden = mode !== "html";
+        document.querySelectorAll("#messageTabs [data-view]").forEach(t => t.classList.toggle("is-active", t.dataset.view === mode));
+      }
+
+      async function loadDomains() {
+        try {
+          const res = await fetch("/api/domains");
+          const data = await res.json();
+          state.domains = data.domains || [];
+        } catch { state.domains = ["2art.fun", "sumeetsxiang.com", "wadao.world", "wearwave.live"]; }
+        renderDomains();
+      }
+
+      async function generateAddress() {
+        $("generateBtn").disabled = true;
+        setStatus("busy", "正在生成邮箱...");
+        try {
+          const customPrefix = $("prefixInput").value.trim();
+          const d = state.selectedDomain === "random" ? "" : state.selectedDomain;
+          
+          // 如果有自定义前缀，直接构造邮箱地址
+          if (customPrefix) {
+            // 验证前缀格式（只允许字母、数字、点、下划线、连字符）
+            if (!/^[a-zA-Z0-9._-]+$/.test(customPrefix)) {
+              setStatus("error", "前缀只能包含字母、数字、点、下划线、连字符");
+              $("generateBtn").disabled = false;
+              return;
+            }
+            
+            // 选择域名
+            let domain = d;
+            if (!domain) {
+              domain = state.domains[Math.floor(Math.random() * state.domains.length)];
+            }
+            
+            state.address = `${customPrefix}@${domain}`;
+            localStorage.setItem("tempMailAddress", state.address);
+            $("manualAddress").value = state.address;
+            state.messages = [];
+            state.activeMessageId = "";
+            state.activeMessage = null;
+            updateUI();
+            renderInbox();
+            renderMessage(null);
+            setStatus("ready", "邮箱已生成，正在监听。");
+            refreshInbox();
+            startAutoRefresh();
+          } else {
+            // 随机生成
+            const res = await fetch(`/api/generate${d ? "?domain=" + d : ""}`);
+            const data = await res.json();
+            if (data.address) {
+              state.address = data.address;
+              localStorage.setItem("tempMailAddress", state.address);
+              $("manualAddress").value = state.address;
+              state.messages = [];
+              state.activeMessageId = "";
+              state.activeMessage = null;
+              updateUI();
+              renderInbox();
+              renderMessage(null);
+              setStatus("ready", "邮箱已生成，正在监听。");
+              refreshInbox();
+              startAutoRefresh();
+            } else { setStatus("error", "生成失败"); }
+          }
+        } catch (e) { 
+          console.error(e);
+          setStatus("error", "生成失败"); 
+        }
+        $("generateBtn").disabled = false;
+      }
+
+      async function refreshInbox(silent = false) {
+        if (!state.address || state.isRefreshing) return;
+        state.isRefreshing = true;
+        if (!silent) { $("refreshBtn").disabled = true; $("refreshBtn").textContent = "正在刷新..."; setStatus("busy", "正在刷新..."); }
+        try {
+          const res = await fetch(`/api/inbox?address=${encodeURIComponent(state.address)}`);
+          const data = await res.json();
+          if (data.success) {
+            state.messages = data.messages || [];
+            updateUI();
+            renderInbox();
+            $("lastUpdated").textContent = formatDate(new Date());
+            $("heroUpdated").textContent = formatDate(new Date());
+            if (state.activeMessageId && !state.messages.find(m => m.id === state.activeMessageId)) {
+              state.activeMessageId = "";
+              state.activeMessage = null;
+              renderMessage(null);
+            }
+            if (!silent) setStatus("ready", state.messages.length ? "收件箱已更新。" : "暂无邮件。");
+          }
+        } catch { if (!silent) setStatus("error", "刷新失败"); }
+        state.isRefreshing = false;
+        $("refreshBtn").disabled = false;
+        $("refreshBtn").textContent = "刷新收件箱";
+      }
+
+      async function openMessage(id) {
+        if (!state.address) return;
+        setStatus("busy", "正在加载邮件...");
+        try {
+          const res = await fetch(`/api/message?address=${encodeURIComponent(state.address)}&id=${id}`);
+          const data = await res.json();
+          if (data.success && data.message) {
+            state.activeMessageId = id;
+            state.activeMessage = data.message;
+            renderInbox();
+            renderMessage(data.message);
+            setStatus("ready", "邮件已加载。");
+          } else { setStatus("error", data.error || "加载失败"); }
+        } catch { setStatus("error", "加载失败"); }
+      }
+
+      function startAutoRefresh() { stopAutoRefresh(); if (state.autoRefresh && state.address) state.refreshTimer = setInterval(() => refreshInbox(true), 5000); }
+      function stopAutoRefresh() { if (state.refreshTimer) { clearInterval(state.refreshTimer); state.refreshTimer = null; } }
+
+      function useManualAddress() {
+        const addr = $("manualAddress").value.trim().toLowerCase();
+        if (!addr) { setStatus("error", "请输入邮箱"); return; }
+        if (!state.domains.some(d => addr.endsWith("@" + d))) { setStatus("error", "不支持的域名"); return; }
+        state.address = addr;
+        localStorage.setItem("tempMailAddress", addr);
+        state.messages = [];
+        state.activeMessageId = "";
+        state.activeMessage = null;
+        updateUI();
+        renderInbox();
+        renderMessage(null);
+        setStatus("ready", "已切换邮箱。");
+        refreshInbox();
+        startAutoRefresh();
+      }
+
+      // Events
+      $("generateBtn").onclick = generateAddress;
+      $("refreshBtn").onclick = () => refreshInbox();
+      $("copyBtn").onclick = async () => { if (state.address) { await navigator.clipboard.writeText(state.address); setStatus("ready", "已复制到剪贴板。"); } };
+      $("useAddressBtn").onclick = useManualAddress;
+      $("manualAddress").onkeypress = e => { if (e.key === "Enter") useManualAddress(); };
+      $("autoRefreshToggle").onchange = e => { state.autoRefresh = e.target.checked; updateUI(); state.autoRefresh ? startAutoRefresh() : stopAutoRefresh(); };
+      $("messageTabs").onclick = e => { const btn = e.target.closest("[data-view]"); if (btn && !btn.disabled) setViewMode(btn.dataset.view); };
+      $("domainSelect").onchange = e => {
+        state.selectedDomain = e.target.value || "random";
+        renderDomains();
+      };
+      $("prefixInput").onkeypress = e => {
+        if (e.key === "Enter") generateAddress();
+      };
+
+      // Init
+      loadDomains().then(() => {
+        const saved = localStorage.getItem("tempMailAddress");
+        if (saved && state.domains.some(d => saved.endsWith("@" + d))) {
+          state.address = saved;
+          $("manualAddress").value = saved;
+          updateUI();
+          refreshInbox();
+          startAutoRefresh();
+        } else { updateUI(); setStatus("idle", "空闲"); }
+      });
+    </script>
+  </body>
+</html>
