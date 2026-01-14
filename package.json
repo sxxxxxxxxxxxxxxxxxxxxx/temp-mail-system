@@ -8,8 +8,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:create": "wrangler d1 create temp-mail-db",
-    "db:migrate": "wrangler d1 execute temp-mail-db --file=./migrations/0001_init.sql",
-    "db:migrate:local": "wrangler d1 execute temp-mail-db --local --file=./migrations/0001_init.sql"
+    "db:migrate": "wrangler d1 execute temp-mail-db --file=./migrations/0001_init.sql && wrangler d1 execute temp-mail-db --file=./migrations/0002_add_generated_addresses.sql",
+    "db:migrate:local": "wrangler d1 execute temp-mail-db --local --file=./migrations/0001_init.sql && wrangler d1 execute temp-mail-db --local --file=./migrations/0002_add_generated_addresses.sql",
+    "db:migrate:new": "wrangler d1 execute temp-mail-db --file=./migrations/0002_add_generated_addresses.sql"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
