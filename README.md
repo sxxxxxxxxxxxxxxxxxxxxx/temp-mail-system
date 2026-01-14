@@ -39,18 +39,25 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 ### 3. 更新配置
 
-复制 `wrangler.toml.example` 为 `wrangler.toml`，并将 `database_id` 替换为上一步输出的值：
+编辑 `wrangler.toml`，将 `database_id` 替换为上一步输出的值：
 
-```bash
-cp wrangler.toml.example wrangler.toml
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "temp-mail-db"
+database_id = "你的数据库ID"
 ```
-
-然后编辑 `wrangler.toml`，更新 `database_id` 和 `DOMAINS`。
 
 ### 4. 初始化数据库
 
 ```bash
 npm run db:migrate
+```
+
+**如果是已有数据库，需要运行新迁移：**
+
+```bash
+npm run db:migrate:new
 ```
 
 ### 5. 部署 Worker
@@ -67,7 +74,7 @@ npm run deploy
 
 ### 7. 配置 Email Routing（重要！）
 
-对于每个支持的域名：
+对于每个支持的域名（2art.fun、sumeetsxiang.com、wadao.world、wearwave.live）：
 
 1. 进入 Cloudflare Dashboard → 选择域名
 2. 点击 **Email** → **Email Routing**
@@ -110,9 +117,18 @@ temp-mail-system/
 │   └── index.html        # 前端页面
 ├── migrations/
 │   └── 0001_init.sql     # 数据库初始化
-├── wrangler.toml.example # Cloudflare 配置示例
+├── wrangler.toml         # Cloudflare 配置
 └── package.json
 ```
+
+## 功能特性
+
+- ✅ **自动清理**：每天凌晨 2 点自动清理超过 24 小时的邮件
+- ✅ **防重复生成**：智能检测已生成的邮箱地址，避免重复
+- ✅ **自定义前缀**：支持用户自定义邮箱前缀
+- ✅ **实时接收**：基于 Cloudflare Email Routing，实时接收邮件
+- ✅ **附件支持**：完整支持邮件附件的接收和下载
+- ✅ **原始 HTML**：保留邮件原始 HTML 格式显示
 
 ## 注意事项
 
@@ -122,6 +138,7 @@ temp-mail-system/
    - Workers：每天 100,000 请求
    - D1：每天 5GB 读取，100MB 写入
    - Email Routing：无限制
+   - Cron Triggers：每天最多 3 个计划任务（免费版）
 
 ## 常见问题
 
@@ -140,4 +157,19 @@ temp-mail-system/
 
 ### Q: 邮件存储多久？
 
-目前没有自动清理，邮件会一直保留在 D1 数据库中。如需定期清理，可以添加 Cron Trigger。
+系统会自动清理超过 24 小时的邮件。清理任务每天凌晨 2 点（UTC）自动运行。
+
+### Q: 如何修改自动清理时间？
+
+编辑 `wrangler.toml` 中的 cron 表达式：
+
+```toml
+[triggers]
+crons = ["0 2 * * *"]  # 每天凌晨 2 点（UTC）
+```
+
+Cron 表达式格式：`分 时 日 月 星期`
+
+### Q: 生成的邮箱会重复吗？
+
+不会。系统会检查数据库，确保每个生成的邮箱地址都是唯一的。生成地址记录会保留 7 天以防短期内重复。

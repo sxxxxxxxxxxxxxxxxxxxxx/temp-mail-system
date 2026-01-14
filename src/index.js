@@ -42,6 +42,19 @@ export default {
   async email(message, env, ctx) {
     await handleEmail(message, env);
   },
+
+  /**
+   * 定时任务处理 - 自动清理旧邮件
+   */
+  async scheduled(event, env, ctx) {
+    try {
+      console.log("Starting scheduled cleanup job...");
+      await cleanupOldEmails(env);
+      console.log("Cleanup job completed successfully");
+    } catch (error) {
+      console.error("Cleanup job failed:", error);
+    }
+  },
 };
 
 /**
@@ -55,9 +68,10 @@ async function handleApi(path, url, env) {
       return jsonResponse({ domains });
     }
 
-    // GET /api/generate - 生成随机邮箱
+    // GET /api/generate - 生成随机邮箱（防重复）
     if (path === "/api/generate") {
       const domains = getDomains(env);
+      const customPrefix = url.searchParams.get("prefix");
       let domain = url.searchParams.get("domain");
       
       if (!domain || !domains.includes(domain.toLowerCase())) {
@@ -66,8 +80,58 @@ async function handleApi(path, url, env) {
         domain = domain.toLowerCase();
       }
 
-      const prefix = generatePrefix(10);
-      const address = `${prefix}@${domain}`;
+      let address;
+      let prefix;
+      let attempts = 0;
+      const maxAttempts = 10;
+
+      // 如果有自定义前缀，直接使用
+      if (customPrefix && /^[a-zA-Z0-9._-]+$/.test(customPrefix)) {
+        prefix = customPrefix.toLowerCase();
+        address = `${prefix}@${domain}`;
+        
+        // 检查是否已存在
+        const existing = await env.DB.prepare(`
+          SELECT address FROM generated_addresses WHERE address = ?
+        `).bind(address).first();
+        
+        if (existing) {
+          return jsonResponse({ 
+            success: false, 
+            error: "该邮箱地址已被使用，请尝试其他前缀" 
+          }, 400);
+        }
+      } else {
+        // 生成随机邮箱，确保不重复
+        while (attempts < maxAttempts) {
+          prefix = generatePrefix(10);
+          address = `${prefix}@${domain}`;
+          
+          // 检查数据库中是否已存在
+          const existing = await env.DB.prepare(`
+            SELECT address FROM generated_addresses WHERE address = ?
+          `).bind(address).first();
+          
+          if (!existing) {
+            break;
+          }
+          
+          attempts++;
+        }
+        
+        if (attempts >= maxAttempts) {
+          return jsonResponse({ 
+            success: false, 
+            error: "生成邮箱失败，请稍后重试" 
+          }, 500);
+        }
+      }
+
+      // 记录生成的邮箱地址
+      await env.DB.prepare(`
+        INSERT INTO generated_addresses (address, created_at)
+        VALUES (?, ?)
+      `).bind(address, Date.now()).run();
 
       return jsonResponse({ address, prefix, domain });
     }
@@ -209,6 +273,38 @@ async function handleApi(path, url, env) {
   } catch (error) {
     console.error("API Error:", error);
     return jsonResponse({ success: false, error: "服务器错误" }, 500);
+  }
+}
+
+/**
+ * 清理超过 24 小时的旧邮件和附件
+ */
+async function cleanupOldEmails(env) {
+  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  
+  try {
+    // 删除超过 24 小时的邮件（附件会通过 ON DELETE CASCADE 自动删除）
+    const result = await env.DB.prepare(`
+      DELETE FROM emails WHERE created_at < ?
+    `).bind(oneDayAgo).run();
+    
+    console.log(`Deleted ${result.changes || 0} old emails`);
+    
+    // 清理生成地址记录表（保留最近 7 天的记录以防短期内重复）
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const addressResult = await env.DB.prepare(`
+      DELETE FROM generated_addresses WHERE created_at < ?
+    `).bind(sevenDaysAgo).run();
+    
+    console.log(`Deleted ${addressResult.changes || 0} old address records`);
+    
+    return {
+      emailsDeleted: result.changes || 0,
+      addressRecordsDeleted: addressResult.changes || 0,
+    };
+  } catch (error) {
+    console.error("Error during cleanup:", error);
+    throw error;
   }
 }
 
