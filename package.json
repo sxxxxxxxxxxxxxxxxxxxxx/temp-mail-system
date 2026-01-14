@@ -1,0 +1,17 @@
+{
+  "name": "temp-mail-system",
+  "version": "2.0.0",
+  "description": "基于 Cloudflare Workers 的临时邮箱系统",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create temp-mail-db",
+    "db:migrate": "wrangler d1 execute temp-mail-db --file=./migrations/0001_init.sql",
+    "db:migrate:local": "wrangler d1 execute temp-mail-db --local --file=./migrations/0001_init.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
