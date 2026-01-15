@@ -15,6 +15,7 @@
 
 ```
 发件人 → Cloudflare Email Routing → Cloudflare Worker → D1 数据库 → 前端展示
+
 ```
 
 ## 部署步骤
@@ -37,6 +38,7 @@ npm run db:create
 ```
 Created D1 database 'temp-mail-db'
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
 ```
 
 ### 3. 更新配置
@@ -101,11 +103,11 @@ npm run dev
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/api/domains` | GET | 获取支持的域名列表 |
-| `/api/generate` | GET | 生成随机邮箱地址 |
+| `/api/generate?prefix=xxx&domain=xxx` | GET | 生成随机邮箱地址（支持自定义前缀和域名） |
 | `/api/inbox?address=xxx` | GET | 获取收件箱邮件列表 |
 | `/api/message?address=xxx&id=xxx` | GET | 获取邮件详情 |
-| `/api/attachment?id=xxx` | GET | 下载附件 |
-| `/api/delete?address=xxx&id=xxx` | GET | 删除邮件 |
+| `/api/attachment?id=xxx&address=xxx` | GET | 下载附件（需要验证邮箱归属） |
+| `/api/delete?address=xxx&id=xxx` | DELETE | 删除邮件 |
 
 ## 项目结构
 
@@ -129,8 +131,12 @@ temp-mail-system/
 - ✅ **防重复生成**：智能检测已生成的邮箱地址，避免重复
 - ✅ **自定义前缀**：支持用户自定义邮箱前缀
 - ✅ **实时接收**：基于 Cloudflare Email Routing，实时接收邮件
-- ✅ **附件支持**：完整支持邮件附件的接收和下载
+- ✅ **附件支持**：完整支持邮件附件的接收和下载（支持二进制附件）
 - ✅ **原始 HTML**：保留邮件原始 HTML 格式显示
+- ✅ **多字符集支持**：支持 UTF-8、GBK、GB2312、Big5 等多种字符集
+- ✅ **速率限制**：基于 IP 和端点的智能速率限制，防止滥用
+- ✅ **新邮件提醒**：浏览器通知和声音提醒
+- ✅ **批量删除**：支持批量删除收件箱邮件
 
 ## 注意事项
 
