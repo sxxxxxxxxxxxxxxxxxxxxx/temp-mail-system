@@ -5,6 +5,7 @@
 
 import { handleEmail } from "./email.js";
 import {
+  CONFIG,
   getDomains,
   generateId,
   generatePrefix,
@@ -12,6 +13,9 @@ import {
   jsonResponse,
   corsResponse,
   extractPreview,
+  getClientIP,
+  checkRateLimit,
+  rateLimitResponse,
 } from "./utils.js";
 
 export default {
@@ -29,7 +33,7 @@ export default {
 
     // API 路由
     if (path.startsWith("/api/")) {
-      return handleApi(path, url, env);
+      return handleApi(path, url, env, request);
     }
 
     // 静态资源
@@ -60,12 +64,24 @@ export default {
 /**
  * API 路由处理
  */
-async function handleApi(path, url, env) {
+async function handleApi(path, url, env, request) {
+  const method = request.method.toUpperCase();
+  const clientIP = getClientIP(request);
+  
   try {
-    // GET /api/domains - 获取域名列表
+    // GET /api/domains - 获取域名列表（不限制速率）
     if (path === "/api/domains") {
       const domains = getDomains(env);
       return jsonResponse({ domains });
+    }
+
+    // 对需要速率限制的端点进行检查
+    const rateLimitedEndpoints = ["/api/generate", "/api/inbox", "/api/message", "/api/delete"];
+    if (rateLimitedEndpoints.includes(path)) {
+      const rateLimit = await checkRateLimit(env, clientIP, path);
+      if (!rateLimit.allowed) {
+        return rateLimitResponse(rateLimit.resetAt);
+      }
     }
 
     // GET /api/generate - 生成随机邮箱（防重复）
@@ -85,17 +101,29 @@ async function handleApi(path, url, env) {
       let attempts = 0;
       const maxAttempts = 10;
 
-      // 如果有自定义前缀，直接使用
-      if (customPrefix && /^[a-zA-Z0-9._-]+$/.test(customPrefix)) {
+      // 如果有自定义前缀
+      if (customPrefix) {
+        // 验证前缀格式：只允许字母、数字、点、下划线、连字符，长度 1-64
+        if (!/^[a-zA-Z0-9._-]{1,64}$/.test(customPrefix)) {
+          return jsonResponse({ 
+            success: false, 
+            error: "前缀只能包含字母、数字、点、下划线、连字符，长度1-64位" 
+          }, 400);
+        }
+        
         prefix = customPrefix.toLowerCase();
         address = `${prefix}@${domain}`;
         
-        // 检查是否已存在
-        const existing = await env.DB.prepare(`
+        // 检查是否已存在（同时检查 generated_addresses 和 emails 表）
+        const existingGenerated = await env.DB.prepare(`
           SELECT address FROM generated_addresses WHERE address = ?
         `).bind(address).first();
         
-        if (existing) {
+        const existingEmail = await env.DB.prepare(`
+          SELECT address FROM emails WHERE address = ? LIMIT 1
+        `).bind(address).first();
+        
+        if (existingGenerated || existingEmail) {
           return jsonResponse({ 
             success: false, 
             error: "该邮箱地址已被使用，请尝试其他前缀" 
@@ -104,7 +132,7 @@ async function handleApi(path, url, env) {
       } else {
         // 生成随机邮箱，确保不重复
         while (attempts < maxAttempts) {
-          prefix = generatePrefix(10);
+          prefix = generatePrefix(CONFIG.PREFIX_LENGTH);
           address = `${prefix}@${domain}`;
           
           // 检查数据库中是否已存在
@@ -133,7 +161,7 @@ async function handleApi(path, url, env) {
         VALUES (?, ?)
       `).bind(address, Date.now()).run();
 
-      return jsonResponse({ address, prefix, domain });
+      return jsonResponse({ success: true, address, prefix, domain });
     }
 
     // GET /api/inbox - 获取收件箱
@@ -156,7 +184,7 @@ async function handleApi(path, url, env) {
         FROM emails
         WHERE address = ?
         ORDER BY created_at DESC
-        LIMIT 50
+        LIMIT ${CONFIG.INBOX_LIMIT}
       `).bind(addressLower).all();
 
       const messages = (result.results || []).map(row => ({
@@ -227,32 +255,58 @@ async function handleApi(path, url, env) {
       });
     }
 
-    // GET /api/attachment - 下载附件
+    // GET /api/attachment - 下载附件（需要验证邮箱归属）
     if (path === "/api/attachment") {
       const id = url.searchParams.get("id");
+      const address = url.searchParams.get("address");
 
       if (!id) {
         return jsonResponse({ success: false, error: "请提供附件ID" }, 400);
       }
 
-      const attachment = await env.DB.prepare(`
-        SELECT * FROM attachments WHERE id = ?
-      `).bind(id).first();
-
-      if (!attachment) {
-        return jsonResponse({ success: false, error: "附件不存在" }, 404);
+      if (!address) {
+        return jsonResponse({ success: false, error: "请提供邮箱地址" }, 400);
       }
 
+      if (!isAllowedDomain(address, env)) {
+        return jsonResponse({ success: false, error: "不支持的域名" }, 400);
+      }
+
+      const addressLower = address.toLowerCase();
+
+      // 查询附件并验证邮箱归属
+      const attachment = await env.DB.prepare(`
+        SELECT a.* FROM attachments a
+        INNER JOIN emails e ON a.email_id = e.id
+        WHERE a.id = ? AND e.address = ?
+      `).bind(id, addressLower).first();
+
+      if (!attachment) {
+        return jsonResponse({ success: false, error: "附件不存在或无权访问" }, 404);
+      }
+
+      // 对文件名进行 RFC 5987 编码以支持中文
+      const encodedFilename = encodeURIComponent(attachment.filename).replace(/'/g, "%27");
+      
       return new Response(attachment.content, {
         headers: {
           "Content-Type": attachment.content_type || "application/octet-stream",
-          "Content-Disposition": `attachment; filename="${attachment.filename}"`,
+          "Content-Disposition": `attachment; filename*=UTF-8''${encodedFilename}`,
+          "Cache-Control": "private, max-age=3600",
         },
       });
     }
 
-    // GET /api/delete - 删除邮件（可选）
+    // DELETE /api/delete - 删除邮件（支持 DELETE 和 POST 方法）
     if (path === "/api/delete") {
+      // 只允许 DELETE 或 POST 方法
+      if (method !== "DELETE" && method !== "POST") {
+        return jsonResponse({ 
+          success: false, 
+          error: "请使用 DELETE 或 POST 方法" 
+        }, 405);
+      }
+
       const address = url.searchParams.get("address");
       const id = url.searchParams.get("id");
 
@@ -260,11 +314,27 @@ async function handleApi(path, url, env) {
         return jsonResponse({ success: false, error: "请提供邮箱地址和邮件ID" }, 400);
       }
 
+      if (!isAllowedDomain(address, env)) {
+        return jsonResponse({ success: false, error: "不支持的域名" }, 400);
+      }
+
+      const addressLower = address.toLowerCase();
+
+      // 先检查邮件是否存在
+      const email = await env.DB.prepare(`
+        SELECT id FROM emails WHERE id = ? AND address = ?
+      `).bind(id, addressLower).first();
+
+      if (!email) {
+        return jsonResponse({ success: false, error: "邮件不存在或无权删除" }, 404);
+      }
+
+      // 删除邮件（附件会通过外键级联删除）
       await env.DB.prepare(`
         DELETE FROM emails WHERE id = ? AND address = ?
-      `).bind(id, address.toLowerCase()).run();
+      `).bind(id, addressLower).run();
 
-      return jsonResponse({ success: true });
+      return jsonResponse({ success: true, message: "邮件已删除" });
     }
 
     // 404
@@ -280,31 +350,40 @@ async function handleApi(path, url, env) {
  * 清理超过 24 小时的旧邮件和附件
  */
 async function cleanupOldEmails(env) {
-  const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const emailExpireTime = now - CONFIG.EMAIL_EXPIRE_MS;
+  const addressExpireTime = now - CONFIG.ADDRESS_EXPIRE_MS;
+  const rateLimitExpireTime = now - CONFIG.RATE_LIMIT_WINDOW_MS * 2; // 保留 2 个窗口期的记录
   
   try {
-    // 删除超过 24 小时的邮件（附件会通过 ON DELETE CASCADE 自动删除）
+    // 删除过期邮件（附件会通过 ON DELETE CASCADE 自动删除）
     const result = await env.DB.prepare(`
       DELETE FROM emails WHERE created_at < ?
-    `).bind(oneDayAgo).run();
+    `).bind(emailExpireTime).run();
     
     console.log(`Deleted ${result.changes || 0} old emails`);
     
     // 清理生成地址记录表（保留最近 7 天的记录以防短期内重复）
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const addressResult = await env.DB.prepare(`
       DELETE FROM generated_addresses WHERE created_at < ?
-    `).bind(sevenDaysAgo).run();
+    `).bind(addressExpireTime).run();
     
     console.log(`Deleted ${addressResult.changes || 0} old address records`);
+    
+    // 清理过期的速率限制记录
+    const rateLimitResult = await env.DB.prepare(`
+      DELETE FROM rate_limits WHERE window_start < ?
+    `).bind(rateLimitExpireTime).run();
+    
+    console.log(`Deleted ${rateLimitResult.changes || 0} old rate limit records`);
     
     return {
       emailsDeleted: result.changes || 0,
       addressRecordsDeleted: addressResult.changes || 0,
+      rateLimitRecordsDeleted: rateLimitResult.changes || 0,
     };
   } catch (error) {
     console.error("Error during cleanup:", error);
     throw error;
   }
 }
-
