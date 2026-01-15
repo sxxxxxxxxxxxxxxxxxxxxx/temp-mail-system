@@ -64,7 +64,7 @@ function parseHeaders(headersRaw) {
 }
 
 /**
- * 解码 MIME 编码的头部
+ * 解码 MIME 编码的头部（支持多字符集）
  */
 function decodeMimeHeader(str) {
   if (!str) return "";
@@ -73,9 +73,9 @@ function decodeMimeHeader(str) {
   return str.replace(mimeRegex, (match, charset, encoding, text) => {
     try {
       if (encoding.toUpperCase() === "B") {
-        return decodeBase64(text);
+        return decodeBase64(text, charset);
       } else if (encoding.toUpperCase() === "Q") {
-        return decodeQuotedPrintable(text.replace(/_/g, " "));
+        return decodeQuotedPrintable(text.replace(/_/g, " "), charset);
       }
     } catch (e) {}
     return match;
@@ -83,25 +83,83 @@ function decodeMimeHeader(str) {
 }
 
 /**
- * Base64 解码 (支持 UTF-8)
+ * 从 Content-Type 中提取字符集
  */
-function decodeBase64(str) {
+function extractCharset(contentType) {
+  if (!contentType) return "utf-8";
+  const match = contentType.match(/charset=["']?([^"';\s]+)["']?/i);
+  return match ? match[1] : "utf-8";
+}
+
+/**
+ * 获取 TextDecoder，支持多种字符集
+ */
+function getTextDecoder(charset) {
+  const normalizedCharset = (charset || "utf-8").toLowerCase().replace(/[^a-z0-9-]/g, "");
+  
+  // 常见字符集映射
+  const charsetMap = {
+    "gbk": "gbk",
+    "gb2312": "gbk",
+    "gb18030": "gb18030",
+    "big5": "big5",
+    "iso88591": "iso-8859-1",
+    "iso-8859-1": "iso-8859-1",
+    "windows1252": "windows-1252",
+    "windows-1252": "windows-1252",
+    "utf8": "utf-8",
+    "utf-8": "utf-8",
+  };
+  
+  const decoderCharset = charsetMap[normalizedCharset] || "utf-8";
+  
+  try {
+    return new TextDecoder(decoderCharset);
+  } catch (e) {
+    // 如果不支持该字符集，回退到 UTF-8
+    return new TextDecoder("utf-8");
+  }
+}
+
+/**
+ * Base64 解码为文本（支持多字符集）
+ */
+function decodeBase64(str, charset = "utf-8") {
   try {
     const binary = atob(str.replace(/\s/g, ""));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
       bytes[i] = binary.charCodeAt(i);
     }
-    return new TextDecoder("utf-8").decode(bytes);
+    return getTextDecoder(charset).decode(bytes);
   } catch (e) {
     return str;
   }
 }
 
 /**
- * Quoted-Printable 解码 (支持 UTF-8)
+ * Base64 解码为二进制数据（用于附件）
  */
-function decodeQuotedPrintable(str) {
+function decodeBase64ToBinary(str) {
+  try {
+    const cleaned = str.replace(/\s/g, "");
+    const binary = atob(cleaned);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (e) {
+    // 解码失败，返回原始字符串的字节
+    const encoder = new TextEncoder();
+    return encoder.encode(str);
+  }
+}
+
+/**
+ * Quoted-Printable 解码（支持多字符集）
+ */
+function decodeQuotedPrintable(str, charset = "utf-8") {
   try {
     // 先处理软换行
     const cleaned = str.replace(/=\r?\n/g, "");
@@ -122,7 +180,7 @@ function decodeQuotedPrintable(str) {
       i++;
     }
     
-    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+    return getTextDecoder(charset).decode(new Uint8Array(bytes));
   } catch (e) {
     return str;
   }
@@ -151,18 +209,42 @@ function parseBody(bodyRaw, contentType, transferEncoding = "") {
         const transferEncoding = part.headers["content-transfer-encoding"] || "";
 
         if (disposition.includes("attachment")) {
-          // 附件
+          // 附件 - 根据 Transfer-Encoding 解码
           const filenameMatch = disposition.match(/filename=["']?([^"';\r\n]+)["']?/i);
+          const encoding = (transferEncoding || "").toLowerCase();
+          
+          let content;
+          let size;
+          
+          if (encoding.includes("base64")) {
+            // Base64 编码的附件，解码为二进制
+            content = decodeBase64ToBinary(part.body);
+            size = content.length;
+          } else if (encoding.includes("quoted-printable")) {
+            // Quoted-Printable 编码
+            const decoded = decodeQuotedPrintable(part.body);
+            const encoder = new TextEncoder();
+            content = encoder.encode(decoded);
+            size = content.length;
+          } else {
+            // 无编码或 7bit/8bit，直接存储
+            const encoder = new TextEncoder();
+            content = encoder.encode(part.body);
+            size = content.length;
+          }
+          
           attachments.push({
             filename: decodeMimeHeader(filenameMatch ? filenameMatch[1] : "attachment"),
             contentType: partType.split(";")[0].trim(),
-            content: part.body,
-            size: part.body.length,
+            content: content,
+            size: size,
           });
         } else if (partType.includes("text/html")) {
-          htmlContent = decodeContent(part.body, transferEncoding);
+          const charset = extractCharset(part.headers["content-type"]);
+          htmlContent = decodeContent(part.body, transferEncoding, charset);
         } else if (partType.includes("text/plain")) {
-          textContent = decodeContent(part.body, transferEncoding);
+          const charset = extractCharset(part.headers["content-type"]);
+          textContent = decodeContent(part.body, transferEncoding, charset);
         } else if (partType.includes("multipart")) {
           // 嵌套 multipart
           const nestedBoundaryMatch = partType.match(/boundary=["']?([^"';\s]+)["']?/i);
@@ -171,10 +253,11 @@ function parseBody(bodyRaw, contentType, transferEncoding = "") {
             for (const nested of nestedParts) {
               const nestedType = (nested.headers["content-type"] || "").toLowerCase();
               const nestedEncoding = nested.headers["content-transfer-encoding"] || "";
+              const nestedCharset = extractCharset(nested.headers["content-type"]);
               if (nestedType.includes("text/html")) {
-                htmlContent = decodeContent(nested.body, nestedEncoding);
+                htmlContent = decodeContent(nested.body, nestedEncoding, nestedCharset);
               } else if (nestedType.includes("text/plain")) {
-                textContent = decodeContent(nested.body, nestedEncoding);
+                textContent = decodeContent(nested.body, nestedEncoding, nestedCharset);
               }
             }
           }
@@ -182,9 +265,11 @@ function parseBody(bodyRaw, contentType, transferEncoding = "") {
       }
     }
   } else if (contentTypeLower.includes("text/html")) {
-    htmlContent = decodeContent(bodyRaw, transferEncoding);
+    const charset = extractCharset(contentType);
+    htmlContent = decodeContent(bodyRaw, transferEncoding, charset);
   } else {
-    textContent = decodeContent(bodyRaw, transferEncoding);
+    const charset = extractCharset(contentType);
+    textContent = decodeContent(bodyRaw, transferEncoding, charset);
   }
 
   return { textContent, htmlContent, attachments };
@@ -217,14 +302,14 @@ function parseMultipart(body, boundary) {
 /**
  * 解码内容
  */
-function decodeContent(content, transferEncoding) {
+function decodeContent(content, transferEncoding, charset = "utf-8") {
   if (!content) return "";
   
   const encoding = (transferEncoding || "").toLowerCase();
   if (encoding.includes("base64")) {
-    return decodeBase64(content);
+    return decodeBase64(content, charset);
   } else if (encoding.includes("quoted-printable")) {
-    return decodeQuotedPrintable(content);
+    return decodeQuotedPrintable(content, charset);
   }
   return content;
 }
@@ -296,4 +381,3 @@ export async function handleEmail(message, env) {
     console.error("Error handling email:", error);
   }
 }
-
