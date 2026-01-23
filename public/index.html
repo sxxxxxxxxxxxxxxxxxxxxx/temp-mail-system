@@ -245,7 +245,12 @@
       .message-shell { background: rgba(255, 255, 255, 0.86); border-radius: var(--radius-md); padding: 18px; border: 1px solid var(--border); }
       .message-empty { color: var(--ink-muted); font-size: 14px; }
       .message-body { display: grid; gap: 16px; }
-      .message-subject { margin: 0; font-size: 20px; }
+      .message-title-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+      .message-subject { margin: 0; font-size: 20px; flex: 1; }
+      .button--danger { background: #dc2626; }
+      .button--danger:hover { background: #b91c1c; box-shadow: 0 10px 16px rgba(220, 38, 38, 0.25); }
+      .button--small { padding: 6px 12px; font-size: 11px; }
+      .inbox-actions { margin-top: 12px; display: flex; justify-content: flex-end; gap: 8px; }
       .message-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; margin: 0; font-size: 12px; color: var(--ink-muted); }
       .message-meta dt { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; margin-bottom: 4px; }
       .message-meta dd { margin: 0; color: var(--ink); font-weight: 600; word-break: break-word; }
@@ -386,6 +391,9 @@
           <div class="inbox-list" id="inboxList">
             <div class="empty-state">暂无邮件。</div>
           </div>
+          <div class="inbox-actions">
+            <button class="button button--ghost button--small" id="deleteAllBtn" type="button">清空收件箱</button>
+          </div>
         </section>
 
         <section class="panel panel--message" style="--delay: 0.18s">
@@ -403,7 +411,10 @@
           <div class="message-shell" id="messageShell">
             <div class="message-empty" id="messageEmpty">未选择邮件。</div>
             <div class="message-body" id="messageBody" hidden>
-              <h3 class="message-subject" id="messageSubject">主题</h3>
+              <div class="message-title-row">
+                <h3 class="message-subject" id="messageSubject">主题</h3>
+                <button class="button button--danger" id="deleteMessageBtn" type="button">删除邮件</button>
+              </div>
               <dl class="message-meta">
                 <div><dt>发件人</dt><dd id="messageFrom">--</dd></div>
                 <div><dt>收件人</dt><dd id="messageTo">--</dd></div>
@@ -425,8 +436,59 @@
     </div>
 
     <script>
-      const state = { domains: [], selectedDomain: "random", address: "", messages: [], activeMessageId: "", activeMessage: null, autoRefresh: true, refreshTimer: null, isRefreshing: false, viewMode: "text" };
+      const state = { 
+        domains: [], 
+        selectedDomain: "random", 
+        address: "", 
+        messages: [], 
+        activeMessageId: "", 
+        activeMessage: null, 
+        autoRefresh: true, 
+        refreshTimer: null, 
+        isRefreshing: false, 
+        viewMode: "text",
+        lastMessageCount: 0,
+        notificationsEnabled: false,
+      };
       const $ = id => document.getElementById(id);
+      
+      // 新邮件提醒音效
+      function playNotificationSound() {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.frequency.value = 800;
+          osc.type = "sine";
+          gain.gain.setValueAtTime(0.3, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+          osc.start(ctx.currentTime);
+          osc.stop(ctx.currentTime + 0.3);
+        } catch (e) {}
+      }
+      
+      // 请求浏览器通知权限
+      async function requestNotificationPermission() {
+        if ("Notification" in window && Notification.permission === "default") {
+          const permission = await Notification.requestPermission();
+          state.notificationsEnabled = permission === "granted";
+        } else if (Notification.permission === "granted") {
+          state.notificationsEnabled = true;
+        }
+      }
+      
+      // 显示新邮件通知
+      function showNewMailNotification(count) {
+        if (state.notificationsEnabled && document.hidden) {
+          new Notification("新邮件", {
+            body: `您有 ${count} 封新邮件`,
+            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📧</text></svg>",
+          });
+        }
+        playNotificationSound();
+      }
 
       function setStatus(s, t) { $("statusLine").dataset.state = s; $("statusText").textContent = t; $("heroStatus").textContent = t; }
       function formatDate(v) { if (!v) return "未知"; const d = new Date(v); return isNaN(d.getTime()) ? v : d.toLocaleString("zh-CN"); }
@@ -522,7 +584,7 @@
           m.attachments.forEach(a => {
             const link = document.createElement("a");
             link.className = "attachment-item";
-            link.href = `/api/attachment?id=${a.id}`;
+            link.href = `/api/attachment?id=${a.id}&address=${encodeURIComponent(state.address)}`;
             link.target = "_blank";
             link.textContent = `${a.filename} (${formatSize(a.size)})`;
             attList.appendChild(link);
@@ -553,24 +615,20 @@
           const customPrefix = $("prefixInput").value.trim();
           const d = state.selectedDomain === "random" ? "" : state.selectedDomain;
           
-          // 如果有自定义前缀，直接构造邮箱地址
-          if (customPrefix) {
-            // 验证前缀格式（只允许字母、数字、点、下划线、连字符）
-            if (!/^[a-zA-Z0-9._-]+$/.test(customPrefix)) {
-              setStatus("error", "前缀只能包含字母、数字、点、下划线、连字符");
-              $("generateBtn").disabled = false;
-              return;
-            }
-            
-            // 选择域名
-            let domain = d;
-            if (!domain) {
-              domain = state.domains[Math.floor(Math.random() * state.domains.length)];
-            }
-            
-            state.address = `${customPrefix}@${domain}`;
+          // 构建 API URL，统一调用后端接口
+          const params = new URLSearchParams();
+          if (d) params.set("domain", d);
+          if (customPrefix) params.set("prefix", customPrefix);
+          
+          const queryString = params.toString();
+          const res = await fetch(`/api/generate${queryString ? "?" + queryString : ""}`);
+          const data = await res.json();
+          
+          if (data.success && data.address) {
+            state.address = data.address;
             localStorage.setItem("tempMailAddress", state.address);
             $("manualAddress").value = state.address;
+            $("prefixInput").value = ""; // 清空前缀输入框
             state.messages = [];
             state.activeMessageId = "";
             state.activeMessage = null;
@@ -581,27 +639,11 @@
             refreshInbox();
             startAutoRefresh();
           } else {
-            // 随机生成
-            const res = await fetch(`/api/generate${d ? "?domain=" + d : ""}`);
-            const data = await res.json();
-            if (data.address) {
-              state.address = data.address;
-              localStorage.setItem("tempMailAddress", state.address);
-              $("manualAddress").value = state.address;
-              state.messages = [];
-              state.activeMessageId = "";
-              state.activeMessage = null;
-              updateUI();
-              renderInbox();
-              renderMessage(null);
-              setStatus("ready", "邮箱已生成，正在监听。");
-              refreshInbox();
-              startAutoRefresh();
-            } else { setStatus("error", "生成失败"); }
+            setStatus("error", data.error || "生成失败");
           }
         } catch (e) { 
           console.error(e);
-          setStatus("error", "生成失败"); 
+          setStatus("error", "网络错误，请重试"); 
         }
         $("generateBtn").disabled = false;
       }
@@ -614,7 +656,18 @@
           const res = await fetch(`/api/inbox?address=${encodeURIComponent(state.address)}`);
           const data = await res.json();
           if (data.success) {
-            state.messages = data.messages || [];
+            const newMessages = data.messages || [];
+            const oldIds = new Set(state.messages.map(m => m.id));
+            const newCount = newMessages.filter(m => !oldIds.has(m.id)).length;
+            
+            // 检测新邮件并提醒
+            if (newCount > 0 && state.lastMessageCount > 0) {
+              showNewMailNotification(newCount);
+              setStatus("ready", `收到 ${newCount} 封新邮件！`);
+            }
+            
+            state.messages = newMessages;
+            state.lastMessageCount = newMessages.length;
             updateUI();
             renderInbox();
             $("lastUpdated").textContent = formatDate(new Date());
@@ -624,7 +677,7 @@
               state.activeMessage = null;
               renderMessage(null);
             }
-            if (!silent) setStatus("ready", state.messages.length ? "收件箱已更新。" : "暂无邮件。");
+            if (!silent && newCount === 0) setStatus("ready", state.messages.length ? "收件箱已更新。" : "暂无邮件。");
           }
         } catch { if (!silent) setStatus("error", "刷新失败"); }
         state.isRefreshing = false;
@@ -668,6 +721,81 @@
         startAutoRefresh();
       }
 
+      async function deleteMessage() {
+        if (!state.address || !state.activeMessageId) {
+          setStatus("error", "请先选择一封邮件");
+          return;
+        }
+        
+        if (!confirm("确定要删除这封邮件吗？此操作无法撤销。")) {
+          return;
+        }
+        
+        setStatus("busy", "正在删除邮件...");
+        try {
+          const res = await fetch(
+            `/api/delete?address=${encodeURIComponent(state.address)}&id=${state.activeMessageId}`,
+            { method: "DELETE" }
+          );
+          const data = await res.json();
+          
+          if (data.success) {
+            // 从消息列表中移除
+            state.messages = state.messages.filter(m => m.id !== state.activeMessageId);
+            state.activeMessageId = "";
+            state.activeMessage = null;
+            updateUI();
+            renderInbox();
+            renderMessage(null);
+            setStatus("ready", "邮件已删除。");
+          } else {
+            setStatus("error", data.error || "删除失败");
+          }
+        } catch (e) {
+          console.error(e);
+          setStatus("error", "网络错误，请重试");
+        }
+      }
+      
+      // 批量删除所有邮件
+      async function deleteAllMessages() {
+        if (!state.address || state.messages.length === 0) {
+          setStatus("error", "没有邮件可删除");
+          return;
+        }
+        
+        if (!confirm(`确定要删除所有 ${state.messages.length} 封邮件吗？此操作无法撤销。`)) {
+          return;
+        }
+        
+        setStatus("busy", "正在删除所有邮件...");
+        let deleted = 0;
+        let failed = 0;
+        
+        for (const msg of state.messages) {
+          try {
+            const res = await fetch(
+              `/api/delete?address=${encodeURIComponent(state.address)}&id=${msg.id}`,
+              { method: "DELETE" }
+            );
+            const data = await res.json();
+            if (data.success) deleted++;
+            else failed++;
+          } catch {
+            failed++;
+          }
+        }
+        
+        // 刷新收件箱
+        await refreshInbox();
+        
+        if (failed === 0) {
+          setStatus("ready", `成功删除 ${deleted} 封邮件。`);
+        } else {
+          setStatus("error", `删除完成：成功 ${deleted}，失败 ${failed}`);
+        }
+      }
+
       // Events
       $("generateBtn").onclick = generateAddress;
       $("refreshBtn").onclick = () => refreshInbox();
@@ -683,9 +811,15 @@
       $("prefixInput").onkeypress = e => {
         if (e.key === "Enter") generateAddress();
       };
+      $("deleteMessageBtn").onclick = deleteMessage;
+      $("deleteAllBtn").onclick = deleteAllMessages;
 
       // Init
-      loadDomains().then(() => {
+      // 初始化
+      loadDomains().then(async () => {
+        // 请求通知权限
+        await requestNotificationPermission();
+        
         const saved = localStorage.getItem("tempMailAddress");
         if (saved && state.domains.some(d => saved.endsWith("@" + d))) {
           state.address = saved;
@@ -693,7 +827,10 @@
           updateUI();
           refreshInbox();
           startAutoRefresh();
-        } else { updateUI(); setStatus("idle", "空闲"); }
+        } else { 
+          updateUI(); 
+          setStatus("idle", "空闲"); 
+        }
       });
     </script>
   </body>
