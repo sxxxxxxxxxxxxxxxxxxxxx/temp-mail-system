@@ -10,6 +10,9 @@ wrangler.toml.bak
 .env
 .env.local
 
+# Local data (development only)
+data/
+
 # Logs
 *.log
 logs/
@@ -23,3 +26,8 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# Unused directories (can be deleted)
+api/
+web/
+server/
